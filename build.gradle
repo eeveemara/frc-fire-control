@@ -22,10 +22,8 @@ dependencies {
     implementation "edu.wpi.first.hal:hal-java:${wpilibVersion}"
     implementation "edu.wpi.first.wpiunits:wpiunits-java:${wpilibVersion}"
 
-    testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
-    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
-}
+    // WPILib geometry classes (Pose2d, etc.) use quickbuf for struct serialization.
+    // GradleRIO provides this automatically, but standalone builds need it explicit.
+    implementation "us.hebi.quickbuf:quickbuf-runtime:1.4"
 
-test {
-    useJUnitPlatform()
 }

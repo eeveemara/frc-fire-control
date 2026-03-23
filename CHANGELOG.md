@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.1.0
+
+New features from community feedback on the Chief Delphi thread. No API breaks, everything is additive.
+
+- **New:** `ShotParameters` record and `ShotLUT` class for bundled RPM + hood angle + TOF lookup tables. Keeps all parameters in sync when interpolating, which matters for adjustable hoods. Based on a design suggested by Illinar (2702).
+- **New:** `shooterAngleOffsetRad` config field for rear-facing shooters. Set to `Math.PI` and the solver rotates the drive heading so the back of the robot points at the hub. Requested by tcrvo on Chief Delphi.
+- **New:** `generateVariableAngleShotLUT()` on ProjectileSimulator. Sweeps both RPM and angle at each distance, picks the lowest RPM. For teams with adjustable hoods.
+- **New:** `magnusSign` parameter on ProjectileSimulator. Set to -1.0 for backspin shooters where Magnus pushes the ball down instead of up.
+- **New:** `generateLUT(minDist, maxDist, step)` overload for custom distance ranges.
+- **New:** `generateShotLUT()` convenience that returns a ShotLUT instead of a GeneratedLUT.
+- **New:** `simulate(rpm, distance, angle)` and `findRPMForDistance(distance, angle)` overloads for specifying launch angle per-call.
+- **New:** Static `rpmToExitVelocity()` and `exitVelocityToRPM()` helpers on ProjectileSimulator. No instance needed.
+- **New:** `loadShotLUT()` and `getHoodAngle()` on ShotCalculator.
+- **New:** GitHub Actions CI.
+- **Docs:** Added sections for pre-tuned data, rear-facing shooters, adjustable hoods, unit conversions, backspin, custom LUT range, and calibration workflow.
+
 ## v1.0.1
 
 Bug fixes for the SOTM solver. No API changes, drop-in replacement for v1.0.0.

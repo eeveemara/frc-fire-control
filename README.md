@@ -1,6 +1,6 @@
 # frc-fire-control
 
-Shoot-on-the-move fire control for FRC. Three standalone Java files, MIT licensed, no team-specific dependencies. Just needs `wpimath` and `ntcore` which you already have from GradleRIO.
+Shoot-on-the-move fire control for FRC. Five standalone Java files, MIT licensed, no team-specific dependencies. Just needs `wpimath` and `ntcore` which you already have from GradleRIO.
 
 [![Demo](https://img.youtube.com/vi/hWCm1sssc6Q/maxresdefault.jpg)](https://www.youtube.com/watch?v=hWCm1sssc6Q)
 
@@ -8,11 +8,12 @@ Shoot-on-the-move fire control for FRC. Three standalone Java files, MIT license
 
 - **ShotCalculator** - Newton-method SOTM solver. Tells your robot what RPM and heading it needs while driving. Handles launcher offset, latency compensation, drag on the ball, and gives you a 0-100 confidence score so you know when it's actually safe to fire.
 - **ProjectileSimulator** - RK4 projectile sim with drag and Magnus lift. Binary-searches RPM for each distance and gives you a 91-point lookup table. You plug in your robot's measurements from CAD and it does the rest. No more hand-tuning shooter tables from match videos.
+- **ShotParameters** + **ShotLUT** - Bundled RPM/angle/TOF lookup table. Use instead of separate maps when you've got an adjustable hood or just want everything in one place. Plugs into ShotCalculator via `loadShotLUT()`.
 - **FuelPhysicsSim** - Full-field ball physics for simulation. Drag, Magnus, friction, ball-ball collisions, wall bounces, hub scoring, CCD, sleeping. Drop it into your sim and watch balls fly around the field. ~2300 lines but it's one file with zero external dependencies beyond WPILib. **Note:** the field geometry (hub positions, bumps, trenches, nets, towers) is hardcoded for 2026 REBUILT. If you want to use this for a different game, you'd need to redo the field constants.
 
 ## How to use it
 
-Grab the 3 Java files from `src/main/java/frc/firecontrol/` and drop them into your project. Change the package declaration to match yours. That's it.
+Grab the 5 Java files from `src/main/java/frc/firecontrol/` and drop them into your project. Change the package declaration to match yours. That's it. (ShotParameters and ShotLUT are optional if you don't need adjustable hood support, the other 3 work on their own.)
 
 They only depend on `wpimath` and `ntcore`, which GradleRIO already gives you.
 
@@ -128,6 +129,131 @@ ballSim.launchBall(launcherPosition, launchVelocity, spinRPM);
 ```
 
 Ball positions publish to NetworkTables so you can see them in AdvantageScope's Field3d view.
+
+### Using your own shot data
+
+If you already have a tuned shooter table from practice, skip ProjectileSimulator and load your values directly:
+
+```java
+// Option 1: basic path (RPM + TOF only, fixed angle)
+ShotCalculator shotCalc = new ShotCalculator(config);
+shotCalc.loadLUTEntry(1.0, 2000, 0.45);
+shotCalc.loadLUTEntry(2.0, 2800, 0.62);
+shotCalc.loadLUTEntry(3.0, 3500, 0.78);
+// ShotCalculator interpolates between these points
+
+// Option 2: ShotLUT (RPM + angle + TOF, for adjustable hoods)
+ShotLUT lut = new ShotLUT();
+lut.put(1.0, 2000, 45.0, 0.45);  // distance, RPM, angle, TOF
+lut.put(2.0, 2800, 42.0, 0.62);
+lut.put(3.0, 3500, 38.0, 0.78);
+shotCalc.loadShotLUT(lut);
+```
+
+If your data uses exit velocity instead of RPM:
+
+```java
+double rpm = ProjectileSimulator.exitVelocityToRPM(exitVelMps, wheelDiameterM, slipFactor);
+```
+
+### Rear-facing shooter
+
+If your shooter faces backward (180 degrees from robot heading), you don't need to change your LUT or inputs. Just set the angle offset so the solver aims the back of the robot at the hub:
+
+```java
+ShotCalculator.Config config = new ShotCalculator.Config();
+config.launcherOffsetX = -0.20;         // negative because it's behind center
+config.shooterAngleOffsetRad = Math.PI; // rear-facing
+// everything else stays the same
+
+ShotCalculator shotCalc = new ShotCalculator(config);
+
+// load LUT normally, create inputs normally
+ShotCalculator.LaunchParameters shot = shotCalc.calculate(inputs);
+if (shot.isValid() && shot.confidence() > 50) {
+    shooter.setRPM(shot.rpm());
+    drivebase.aimAt(shot.driveAngle()); // already rotated, points the back at the hub
+}
+```
+
+The solver rotates the drive heading internally, so `shot.driveAngle()` already accounts for the offset. Your inputs should use the real robot pose, don't flip anything.
+
+### Adjustable hood / variable angle
+
+If your shooter has an adjustable hood, use `generateVariableAngleShotLUT()` to sweep both RPM and angle at each distance. It picks the lowest RPM (fastest recovery) at each distance:
+
+```java
+ProjectileSimulator sim = new ProjectileSimulator(params);
+
+// sweep angles from 30 to 60 degrees in 1-degree steps
+ShotLUT lut = sim.generateVariableAngleShotLUT(30.0, 60.0, 1.0);
+
+ShotCalculator shotCalc = new ShotCalculator(config);
+shotCalc.loadShotLUT(lut);
+
+// in robotPeriodic():
+ShotCalculator.LaunchParameters shot = shotCalc.calculate(inputs);
+if (shot.isValid()) {
+    shooter.setRPM(shot.rpm());
+    hood.setAngle(shotCalc.getHoodAngle(shot.solvedDistanceM()));
+    drivebase.aimAt(shot.driveAngle());
+}
+```
+
+You can also build a ShotLUT manually from your own tuned (distance, RPM, angle, TOF) data. See "Using your own shot data" above.
+
+### Unit conversions
+
+If your data is in exit velocity (m/s) instead of RPM, or you need to convert for wiring up FuelPhysicsSim:
+
+```java
+// RPM to ball speed
+double exitVelMps = ProjectileSimulator.rpmToExitVelocity(3000, wheelDiameterM, slipFactor);
+
+// ball speed to RPM
+double rpm = ProjectileSimulator.exitVelocityToRPM(15.0, wheelDiameterM, slipFactor);
+```
+
+These are static methods, you don't need a ProjectileSimulator instance.
+
+### Custom LUT range
+
+By default, `generateLUT()` produces entries from 0.50m to 5.00m. If your robot scores from further out:
+
+```java
+// 1.0m to 8.0m in 10cm steps
+ProjectileSimulator.GeneratedLUT lut = sim.generateLUT(1.0, 8.0, 0.10);
+```
+
+### Backspin shooters
+
+If your flywheel imparts backspin (ball top moves forward), Magnus pushes the ball down instead of lifting it. Tell the simulator:
+
+```java
+// default is +1.0 (topspin, upward lift)
+ProjectileSimulator sim = new ProjectileSimulator(params, -1.0);
+
+// or change it after construction
+sim.setMagnusSign(-1.0);
+```
+
+The LUT will account for the downward Magnus force, giving you higher RPMs to compensate.
+
+### Calibration workflow
+
+The recommended approach (hat tip to Oblarg on Chief Delphi) for tuning your LUT:
+
+1. **Start with sim.** Generate a baseline LUT from ProjectileSimulator using your best CAD measurements.
+2. **Measure on the real robot.** At a few known distances, record what RPM actually scores. These won't perfectly match the sim.
+3. **Fit the fudge factors.** Adjust `slipFactor`, `dragCoeff`, and `magnusCoeff` until the sim agrees with your measured points. You're calibrating the sim to your specific shooter, not blindly trusting it.
+4. **Use the calibrated sim going forward.** If you change the mechanism (different wheel, different angle), update the physical parameters and regenerate. You won't need to re-measure the entire table.
+
+On top of the sim baseline, you've got two more correction layers:
+
+- `addRpmCorrection(distance, deltaRpm)` for per-distance tweaks from practice
+- `adjustOffset(delta)` for copilot live trim during a match
+
+The three layers stack: sim LUT + per-distance corrections + flat copilot offset.
 
 ## How the math works
 
